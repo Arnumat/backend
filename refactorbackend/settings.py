@@ -40,16 +40,43 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'streamvideo.apps.StreamvideoConfig',
-    'landsnail'
+    'rest_framework.authtoken',
+    # 'landsnail',
+    'streamvideo',
+    'detection',
 ]
 
+# .apps.StreamvideoConfig
+
+# if use redis for realtime app
+# CHANNEL_LAYERS = {
+#     'default': {
+#         'BACKEND': 'channels_redis.core.RedisChannelLayer',
+#         'CONFIG': {
+#             "hosts": [('127.0.0.1', 6379)],
+#         },
+#     },
+# }
+
+# settings.py
+
+# CHANNEL_LAYERS = {
+#     'default': {
+#         'BACKEND': 'channels_postgres.core.PostgresChannelLayer',
+#         'CONFIG': {
+#             'database': 'landsnail',
+#             'user': 'postgres',
+#             'password': '0815768242',
+#             'host': 'localhost',
+#             'port': '5432',
+#         },
+#     },
+# }
+
+# for default in use memories
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [('127.0.0.1', 6379)],
-        },
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
     },
 }
 
@@ -102,6 +129,25 @@ DATABASES = {
         }
     }
 }
+
+
+#DBx 9051
+#uname :admin
+
+# PEM 8443
+#bouncer 6432
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',  # Database backend
+#         'NAME': 'landsnail',               # Database name
+#         'USER': 'postgres',               # Your Postgres username
+#         'PASSWORD': '0815768242',       # Your Postgres password
+#         'HOST': 'localhost',                        # Set to 'localhost' if it's running locally
+#         'PORT': '5432',                             # Default Postgres ver 17 port
+#     }
+# }
+
+
 
 
 # Password validation

@@ -1,0 +1,107 @@
+import os
+import cv2
+import threading
+import time
+import base64
+import supervision as sv
+from ultralytics import YOLOv10
+from .models import FrameDetectedList, LandSnailDetectedList, Species
+
+class VideoStreamHandler:
+    _instance = None
+    _lock = threading.Lock()
+
+    @staticmethod
+    def get_instance():
+        if VideoStreamHandler._instance is None:
+            with VideoStreamHandler._lock:
+                if VideoStreamHandler._instance is None:
+                    VideoStreamHandler._instance = VideoStreamHandler()
+        return VideoStreamHandler._instance
+
+    def __init__(self):
+        self.HOME = os.getcwd()
+        self.bounding_box_annotator = sv.BoundingBoxAnnotator()
+        self.label_annotator = sv.LabelAnnotator()
+        self.model = YOLOv10(f'{self.HOME}/models/yolo/yolov10/X-size/best.pt')
+        self.video = cv2.VideoCapture(0)
+        self.running = False
+        self.clients = []
+        self.lock = threading.Lock()
+
+    def start_stream(self):
+        if not self.running:
+            self.running = True
+            threading.Thread(target=self.stream_video).start()
+
+    def stop_stream(self):
+        self.video.release()
+        self.running = False
+
+    def register_client(self, client):
+        with self.lock:
+            self.clients.append(client)
+
+    def unregister_client(self, client):
+        with self.lock:
+            self.clients.remove(client)
+
+    def create_detection_entries(self, detections, frame_image):
+        # Save frame image to file
+        frame_image_path = self.save_frame_image(frame_image)
+        
+        # Create FrameDetectedList instance
+        frame_instance = FrameDetectedList(frame_image=frame_image_path, detected_count=len(detections.xyxy))
+        frame_instance.save()
+        
+        # Create LandSnailDetectedList instances
+        for i in range(len(detections.xyxy)):
+            x_min, y_min, x_max, y_max = detections.xyxy[i]
+            detected_coordinate = f"{x_min},{y_min},{x_max},{y_max}"
+            class_name = detections.data['class_name'][i]
+            
+            # Get or create Species object
+            species = Species.objects.get_or_create(species_name=class_name)[0]
+            
+            # Create LandSnailDetectedList instance
+            detected_instance = LandSnailDetectedList(
+                detected_coordinate=detected_coordinate,
+                frame=frame_instance,
+                species=species
+            )
+            detected_instance.save()
+
+    def annotate_and_broadcast(self, frame):
+        results = self.model(frame)[0]
+        detections = sv.Detections.from_ultralytics(results)
+        if len(detections.xyxy) > 0:
+            self.create_detection_entries(detections, frame)
+        annotated_image = self.bounding_box_annotator.annotate(scene=frame, detections=detections)
+        annotated_image = self.label_annotator.annotate(scene=annotated_image, detections=detections)
+        _, buffer = cv2.imencode('.jpg', annotated_image)
+        frame_data = base64.b64encode(buffer).decode('utf-8')
+        self.broadcast(frame_data)
+
+    def broadcast(self, frame_data):
+        with self.lock:
+            for client in self.clients:
+                client.send(frame_data)
+
+    def stream_video(self):
+        while self.running and self.video.isOpened():
+            grabbed, frame = self.video.read()
+            if not grabbed:
+                break
+            self.annotate_and_broadcast(frame)
+            time.sleep(0.02)  # Adjust the sleep time as needed
+        self.video.release()
+
+    def save_frame_image(self, frame):
+        # Generate unique filename
+        timestamp = time.time()
+        frame_image_path = f'../media/frames_detected/frame_{timestamp}.jpg'
+        
+        # Save frame image to file
+        cv2.imwrite(frame_image_path, frame)
+        
+        return frame_image_path
