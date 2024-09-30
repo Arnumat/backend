@@ -1,183 +1,210 @@
 import os
+from queue import Full
 import cv2
 import base64
+import time
+import numpy as np
+import requests
+import pytz
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.conf import settings
-import numpy as np
-import pytz
-
-from .yolo_initialization import get_yolo_model
-
-import supervision as sv
-
 from django.utils import timezone
 
-import requests
+from .yolo_initialization import get_yolo_model
+import supervision as sv
 
+import signal
+import threading
 import time
 
+shutdown_flag = False
+
+def signal_handler(sig, frame):
+    global shutdown_flag
+    print("Shutdown signal received.")
+    shutdown_flag = True
+
+
 def run_detection():
-    
+    global shutdown_flag
     # Initialize YOLO model
     model = get_yolo_model()
-    
-    # static instance
-    duration_in_minutes = 10
-    duration_in_seconds = duration_in_minutes * 60
 
+    # Initialize tracker and annotators
     tracker = sv.ByteTrack()
-    
     trace_annotator = sv.TraceAnnotator()
     bounding_box_annotator = sv.BoundingBoxAnnotator()
     label_annotator = sv.LabelAnnotator()
-    bangkok_tz = pytz.timezone('Asia/Bangkok')
-    
+
+
     # Capture video from the source (camera or stream)
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Change this to your specific video source
+    cap = cv2.VideoCapture(0,cv2.CAP_DSHOW)
+    # cap = cv2.VideoCapture(0)
+    
+    # Change this to your specific video source
+    
+    if not cap.isOpened():
+        print("Error: Could not open video source.")
+        return  # Exit if video source is not opened
+
+    print("Video source opened successfully.")
 
     # Access channel layer to send frames
     channel_layer = get_channel_layer()
 
-    while True:
-        ret, frame = cap.read()        
+    frame_rate = 1
+    last_saved_time = time.time()
+    
+    while not shutdown_flag:
+        ret, frame = cap.read()
         if not ret:
+            print("Error: Failed to read frame from video source.")
             break
-        
-        # Perform detection on the frame using the YOLO model
-        results = model(frame)[0]
 
+        # Perform detection on the frame using the YOLO model
+        results = model(frame, verbose=False)[0]
         detections = sv.Detections.from_ultralytics(results)
         detections = tracker.update_with_detections(detections)
-        
-        if detections.tracker_id.size > 0:  # Check if there are any detections
-            labels = [f"{detections.data['class_name']} #{tracker_id}" for tracker_id in detections.tracker_id]
 
+        current_time = time.time()
+
+        # Prepare to send frames
+        if detections.tracker_id.size > 0:
+            labels = [f"{detections.data['class_name']} #{tracker_id}" for tracker_id in detections.tracker_id]
             annotated_frame = label_annotator.annotate(scene=frame.copy(), detections=detections, labels=labels)
             annotated_frame = bounding_box_annotator.annotate(scene=annotated_frame, detections=detections)
             annotated_frame = trace_annotator.annotate(scene=annotated_frame, detections=detections)
+            # Encode the annotated frame as base64 for WebSocket transmission
+            base64_frame = encode_frame_as_base64(annotated_frame)
+            if base64_frame:
+                send_detected_frame(channel_layer, base64_frame, detections)
 
-            # Package data detection
-            timedetected = timezone.now()
-            local_time = timedetected.astimezone(bangkok_tz)
-            formatted_datetime = local_time.strftime('%d %B %Y at time %H:%M:%S')  
+            # Save detection data every 20 seconds
+            if current_time - last_saved_time > 20:
+                last_saved_time = current_time
+                
+                detectionWrite(base64_frame, detections, timezone.now())
+                send_line_notify(base64_frame, len(detections.class_id), timezone.now())
 
-            # Encode frame as base64 to send over WebSocket
-            _, buffer = cv2.imencode('.jpg', annotated_frame)
-            base64_frame = base64.b64encode(buffer).decode('utf-8')
-            
-            # Check detected before saving data  
-            detected = len(detections.class_id)
-            if detected > 0:
-                detectionWrite(base64_frame, detections, timedetected)
-                send_line_notify(base64_frame, detected, timedetected)
-
-            async_to_sync(channel_layer.group_send)(
-                "video_stream",
-                {
-                    "type": "video_frame",
-                    "frame": base64_frame,
-                    "found": detected,
-                    "time_detected": formatted_datetime,
-                }
-            )
         else:
-            print("No detections found.")
-            _, buffer = cv2.imencode('.jpg',frame)
-            base64_frame = base64.b64encode(buffer).decode('utf-8')
-            timedetected = timezone.now()
-            local_time = timedetected.astimezone(bangkok_tz)
-            formatted_datetime = local_time.strftime('%d %B %Y at time %H:%M:%S')  
+            # Handle case with no detections
+            
+            base64_frame = encode_frame_as_base64(frame)
+            if base64_frame:
+                send_detected_frame(channel_layer, base64_frame, detections)
 
-            async_to_sync(channel_layer.group_send)(
-            "video_stream",
-                {
-                    "type": "video_frame",
-                    "frame": base64_frame,
-                    "found": 0,
-                    "time_detected": formatted_datetime,
-                })
-    # Release the video capture when done
+        
+
+
+        # Throttle the frame rate
+        time.sleep(1 / frame_rate)
+
+    # Release video capture when done
     cap.release()
 
 
+async def send_detected_frame(channel_layer, base64_frame, detections):
+    timedetected = timezone.now()
+    bangkok_tz = pytz.timezone('Asia/Bangkok')
+    local_time = timedetected.astimezone(bangkok_tz)
+    formatted_datetime = local_time.strftime('%d %B %Y at %H:%M:%S')
+
+    print("Sending frame with detected objects count:", len(detections.class_id))  # Debugging log
+
+    try:
+        await channel_layer.group_send(
+            "video_stream",
+            {
+                "type": "video_frame",
+                "frame": base64_frame,
+                "found": len(detections.class_id),
+                "time_detected": formatted_datetime,
+            }
+        )
+    except Exception as e:
+        print(f"Error sending frame: {e}")
 
 
-def detectionWrite(base64_frame , detections ,time_detect):
+
+
+def encode_frame_as_base64(frame):
+    try:
+        compress_rate = [int(cv2.IMWRITE_JPEG_QUALITY), 50]  # Reduce image quality for smaller size
+        _, buffer = cv2.imencode('.jpg', frame, compress_rate)
+        
+        # _, buffer = cv2.imencode('.jpg', frame)
+        
+        return base64.b64encode(buffer).decode('utf-8')
+    except Exception as e:
+        print(f"Error encoding frame: {e}")
+        return None
+
+
+def detectionWrite(base64_frame, detections, time_detect):
     image_path = save_frame_image(base64_frame)
-    from .models import LandsnailDetection ,FrameDetection , Species
-    frame_instance = FrameDetection(image = image_path, snail_detected = len(detections.class_id), time_detect = time_detect)
+    from .models import LandsnailDetection, FrameDetection, Species
+
+    frame_instance = FrameDetection(image=image_path, snail_detected=len(detections.class_id), time_detect=time_detect)
     frame_instance.save()
-    
-    
+
     for i in range(len(detections.xyxy)):
-            # x_min, y_min, x_max, y_max = detections.xyxy[i]
-            # detected_coordinate = f"{x_min},{y_min},{x_max},{y_max}"
-            class_name = detections.data['class_name'][i]
-            conf_score = detections.confidence[i]
-            # Get or create Species object
-            species = Species.objects.get_or_create(name=class_name)[0]
-            
-            # Create LandSnailDetectedList instance
-            detected_instance = LandsnailDetection(
-                conf_score=conf_score,
-                frame=frame_instance,
-                species=species
-            )
-            detected_instance.save()
-            return
-            
+        class_name = detections.data['class_name'][i]
+        conf_score = detections.confidence[i]
+        species, created = Species.objects.get_or_create(name=class_name)
+
+        detected_instance = LandsnailDetection(
+            conf_score=conf_score,
+            frame=frame_instance,
+            species=species
+        )
+        detected_instance.save()
+
+
 def save_frame_image(base64_frame):
-    
-    
+    # Generate unique filename using timestamp
     timestamp = time.time()
     filename = f'frame_{timestamp}.jpg'
 
     # Construct the full path to the media directory
-    media_directory = settings.MEDIA_ROOT  # Assuming MEDIA_ROOT is set in settings.py
+    media_directory = settings.MEDIA_ROOT
     frame_image_path = os.path.join(media_directory, 'frames_detected', filename)
 
-    # Create directory if it does not exist
+    # Create directory if it doesn't exist
     os.makedirs(os.path.dirname(frame_image_path), exist_ok=True)
     
-    
-    # Generate unique filename using timestamp
+    # Decode base64 to image
     image_data = base64.b64decode(base64_frame)
-
-    # Convert byte data to a numpy array
     nparr = np.frombuffer(image_data, np.uint8)
-
-    # Decode the image from the numpy array
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    # Save the frame image to the specified file path
+    # Save the frame image
     cv2.imwrite(frame_image_path, img)
 
     return frame_image_path
 
 
-def send_line_notify(frame_byte, detect_count, time_detect):
-
+def send_line_notify(base64_frame, detect_count, time_detect):
     line_notify_api = 'https://notify-api.line.me/api/notify'
-    token  = "OfHR5ocCfD7v7i6EyHJ4t8FAt0hFj3JcWUg21mmH2AB"
+    token = "CFQJre9DQJtRfZFLPIM8Td21MpkFP8BZ194EhNF7oh7"  # Replace with your token
+
     headers = {
         'Authorization': f'Bearer {token}'
     }
-    
-    # Create a message with detection count and time detected
+
+    # Create message with detection count and time
     message = f'Detections: {detect_count}, Time Detected: {time_detect}'
+    payload = {'message': message}
+
+    # Prepare the image file
+    files = {'imageFile': ('detection.jpg', base64.b64decode(base64_frame), 'image/jpeg')}
     
-    # Prepare the payload
-    payload = {
-        'message': message
-    }
-    
-    # Send the POST request with an image
-    files = {'imageFile': ('detection.jpg', frame_byte, 'image/jpeg')}
-    
-    requests.post(line_notify_api, headers=headers, data=payload, files=files)
-    # response =
-    # response = requests.post(line_notify_api, headers=headers, data=payload)    
-    return
-    # return response
+    # Send request with the image
+    response = requests.post(line_notify_api, headers=headers, data=payload, files=files)
+    print(f"LINE Notify response: {response.status_code}")
+
+
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)

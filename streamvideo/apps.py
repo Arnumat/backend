@@ -6,5 +6,3 @@ class StreamvideoConfig(AppConfig):
     name = 'streamvideo'
 
 
-    # def ready(self):
-    #     initialize_yolo_model()
