@@ -8,6 +8,7 @@ class DetectionConfig(AppConfig):
     
     def ready(self):
         # Start the detection thread
+        print("starting thread")
         self.detection_thread = threading.Thread(target=run_detection)
         self.detection_thread.start()
 

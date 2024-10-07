@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     # 'landsnail',
+    'detection_config',
     'streamvideo',
     'detection',
 ]
@@ -49,14 +50,14 @@ INSTALLED_APPS = [
 # .apps.StreamvideoConfig
 
 # if use redis for realtime app
-# CHANNEL_LAYERS = {
-#     'default': {
-#         'BACKEND': 'channels_redis.core.RedisChannelLayer',
-#         'CONFIG': {
-#             "hosts": [('127.0.0.1', 6379)],
-#         },
-#     },
-# }
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}
 
 # settings.py
 
@@ -74,11 +75,11 @@ INSTALLED_APPS = [
 # }
 
 # for default in use memories
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
-    },
-}
+# CHANNEL_LAYERS = {
+#     'default': {
+#         'BACKEND': 'channels.layers.InMemoryChannelLayer',
+#     },
+# }
 
 
 MIDDLEWARE = [
@@ -116,19 +117,19 @@ ASGI_APPLICATION = 'refactorbackend.asgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": "landsnaildetection_schemas",
-        "USER": "root",
-        "PASSWORD": "Arnumat@4185",
-        "HOST": "localhost",
-        "PORT": "3306",
-        "OPTION":{
-            "threaded": True,
-        }
-    }
-}
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.mysql",
+#         "NAME": "landsnaildetection_schemas",
+#         "USER": "root",
+#         "PASSWORD": "Arnumat@4185",
+#         "HOST": "localhost",
+#         "PORT": "3306",
+#         "OPTION":{
+#             "threaded": True,
+#         }
+#     }
+# }
 
 
 #DBx 9051
@@ -136,16 +137,16 @@ DATABASES = {
 
 # PEM 8443
 #bouncer 6432
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',  # Database backend
-#         'NAME': 'landsnail',               # Database name
-#         'USER': 'postgres',               # Your Postgres username
-#         'PASSWORD': '0815768242',       # Your Postgres password
-#         'HOST': 'localhost',                        # Set to 'localhost' if it's running locally
-#         'PORT': '5432',                             # Default Postgres ver 17 port
-#     }
-# }
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',  # Database backend
+        'NAME': 'landsnail',               # Database name
+        'USER': 'postgres',               # Your Postgres username
+        'PASSWORD': '0815768242',       # Your Postgres password
+        'HOST': 'localhost',                        # Set to 'localhost' if it's running locally
+        'PORT': '5432',                             # Default Postgres ver 17 port
+    }
+}
 
 
 
