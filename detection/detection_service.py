@@ -24,14 +24,14 @@ def signal_handler(sig, frame):
     print("Shutdown signal received.")
     shutdown_flag = True
 
-# Register signal handlers for SIGINT and SIGTERM
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+
 
 def run_detection():
     global shutdown_flag
     
-    CAMERA_INDEX = "http://192.168.69.36:5000/video_feed"  # Your video feed URL
+    # CAMERA_INDEX = "http://192.168.112.36:5000/video_feed"  # Your video feed URL
+    CAMERA_INDEX = 1  # Your video feed URL
+    
     DETECTED_COUNT = 0
     SEQUENCE_TIME_SEC = 60
 
@@ -73,7 +73,7 @@ def run_detection():
         
         if DETECTED_COUNT > 0:
             if detections.tracker_id.size > 0:
-                labels = [f"{detections.data['class_name'][0]} #{tracker_id}" for tracker_id in detections.tracker_id]
+                labels = [f"{class_name} #{tracker_id}" for class_name,tracker_id in zip(detections.data['class_name'],detections.tracker_id)]
                 annotated_frame = label_annotator.annotate(scene=frame.copy(), detections=detections, labels=labels)
                 annotated_frame = trace_annotator.annotate(scene=annotated_frame, detections=detections)
             else: 
@@ -93,7 +93,7 @@ def run_detection():
                 formatted_time = conv_time_format(timezone.now())
                 detectionWrite(result_base64_frame, detections, timezone.now())
                 send_line_notify(result_base64_frame, len(detections.class_id), formatted_time)
-            
+                print('detection save signal')
             DETECTED_COUNT = 0
             
         else:
@@ -110,7 +110,7 @@ def run_detection():
 
 def send_detected_frame(channel_layer, base64_frame, detections):
     time_detected = conv_time_format(timezone.now())
-  
+
 
     try:
         async_to_sync(channel_layer.group_send)(
@@ -129,7 +129,7 @@ def conv_time_format(time_detect):
     # Convert the `time_detect` to a string in the desired format
     bangkok_tz = pytz.timezone('Asia/Bangkok')
     local_time = time_detect.astimezone(bangkok_tz)
-    formatted_time = local_time.strftime('%d %B %Y at %H:%M:%S')
+    formatted_time = local_time.strftime('%H:%M:%S')
     return formatted_time
 
 def encode_frame_as_base64(frame, width=640):
@@ -220,3 +220,8 @@ def send_line_notify(base64_frame, detect_count, time_detect):
     # Send request with the image
     response = requests.post(line_notify_api, headers=headers, data=payload, files=files)
   
+
+
+# Register signal handlers for SIGINT and SIGTERM
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)

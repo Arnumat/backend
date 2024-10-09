@@ -8,5 +8,7 @@ urlpatterns = [
     path('auth/login',login),
     path('auth/logout',logout),
     path('auth/signup',signup),
-    path('',include('detection.urls'))
+    path('',include('detection.urls')),
+    path('config',include('detection_config.urls'))
+    
 ]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
