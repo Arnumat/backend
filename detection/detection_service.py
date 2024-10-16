@@ -27,13 +27,16 @@ def signal_handler(sig, frame):
 
 
 def run_detection():
+    from detection_config.models import DetectionConfiguration
     global shutdown_flag
     
     # CAMERA_INDEX = "http://192.168.112.36:5000/video_feed"  # Your video feed URL
-    CAMERA_INDEX = 1  # Your video feed URL
+    CAMERA_INDEX = 0  # Your video feed URL
     
     DETECTED_COUNT = 0
-    SEQUENCE_TIME_SEC = 60
+    SEQUENCE_TIME_INSERT_SEC = 60
+    SEQUENCE_TIME_NOTIFY_SEC = 60
+    
 
     # Load the YOLO model
     model = get_yolo_model()
@@ -41,7 +44,8 @@ def run_detection():
     # Initialize the tracker and annotators
     tracker = sv.ByteTrack()
     trace_annotator = sv.TraceAnnotator()
-    bounding_box_annotator = sv.BoundingBoxAnnotator()
+    # bounding_box_annotator = sv.BoundingBoxAnnotator()
+    bounding_box_annotator = sv.BoxAnnotator()
     label_annotator = sv.LabelAnnotator()
 
     # Set up the Django Channels layer
@@ -57,6 +61,8 @@ def run_detection():
 
     frame_rate = 20  # Frame rate control
     last_saved_time = time.time()
+    last_notify_time = time.time()
+    
     
     while not shutdown_flag:
         ret, frame = cap.read()
@@ -72,6 +78,7 @@ def run_detection():
         current_time = time.time()
         
         if DETECTED_COUNT > 0:
+            
             if detections.tracker_id.size > 0:
                 labels = [f"{class_name} #{tracker_id}" for class_name,tracker_id in zip(detections.data['class_name'],detections.tracker_id)]
                 annotated_frame = label_annotator.annotate(scene=frame.copy(), detections=detections, labels=labels)
@@ -87,13 +94,26 @@ def run_detection():
             # Send the result frame to WebSocket
             send_detected_frame(channel_layer, result_base64_frame, detections)
                     
-            if current_time - last_saved_time > SEQUENCE_TIME_SEC:
+            config = DetectionConfiguration.objects.last()
+            SEQUENCE_TIME_INSERT_SEC = config.sequence_insert_data      
+            SEQUENCE_TIME_NOTIFY_SEC = config.sequence_notify
+            if (current_time - last_saved_time )> (SEQUENCE_TIME_INSERT_SEC * 60):
                 # Save detection data every SEQUENCE_TIME_SEC seconds
                 last_saved_time = current_time
                 formatted_time = conv_time_format(timezone.now())
                 detectionWrite(result_base64_frame, detections, timezone.now())
-                send_line_notify(result_base64_frame, len(detections.class_id), formatted_time)
                 print('detection save signal')
+
+            if (current_time - last_notify_time )> (SEQUENCE_TIME_NOTIFY_SEC * 60):
+                # Save detection data every SEQUENCE_TIME_SEC seconds
+                last_notify_time = current_time
+                # formatted_time = conv_time_format(timezone.now())
+                detectionWrite(result_base64_frame, detections, timezone.now())
+                
+                print('detection notify signal')
+            
+                send_line_notify(result_base64_frame, len(detections.class_id), formatted_time)
+            
             DETECTED_COUNT = 0
             
         else:

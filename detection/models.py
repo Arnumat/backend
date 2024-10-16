@@ -19,7 +19,7 @@ class FrameDetection(models.Model):
         bangkok_tz = pytz.timezone('Asia/Bangkok')
         local_time = self.time_detect.astimezone(bangkok_tz)
         formatted_date = local_time.strftime('%d %B %Y at time %H:%M:%S')
-
+        
         return f"Frame {self.snail_detected} at {formatted_date}"
     
 
